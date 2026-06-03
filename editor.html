@@ -742,12 +742,21 @@ function applyText(){
   const newTxt = document.getElementById('text-ta').value;
   pushUndo();
 
-  // 1. Try direct text nodes first (safest — leaves child elements untouched)
-  const textNodes = Array.from(_txtEl.childNodes).filter(n => n.nodeType === 3 && n.textContent.trim());
-  if(textNodes.length){
-    textNodes[0].textContent = newTxt;
+  const directTextNodes = Array.from(_txtEl.childNodes).filter(n => n.nodeType === 3 && n.textContent.trim());
+  const inlineKids = Array.from(_txtEl.children).filter(c => INLINE_TAGS.has(c.tagName.toUpperCase()) && c.textContent.trim());
+
+  if(directTextNodes.length && inlineKids.length){
+    // Mixed content: e.g. <h2>Our Core <span>Services</span></h2>
+    // Replace EVERYTHING with plain text so we don't get duplicates
+    _txtEl.textContent = newTxt;
+  } else if(directTextNodes.length){
+    // Simple element with only direct text nodes — update the first one
+    directTextNodes[0].textContent = newTxt;
+  } else if(inlineKids.length){
+    // All text is inside inline children — update the first one
+    inlineKids[0].textContent = newTxt;
   } else {
-    // 2. Find first non-slider child element with text and update that
+    // Find first non-slider child element with text
     let patched = false;
     for(const child of _txtEl.children){
       if(!isSliderEl(child) && child.innerText && child.innerText.trim()){
@@ -756,9 +765,8 @@ function applyText(){
         break;
       }
     }
-    // 3. Last resort — but never use innerText= as that wipes slider children
     if(!patched){
-      const clone = _txtEl.cloneNode(false); // empty clone, no children
+      const clone = _txtEl.cloneNode(false);
       clone.textContent = newTxt;
       _txtEl.parentElement.replaceChild(clone, _txtEl);
       _txtEl = clone;
