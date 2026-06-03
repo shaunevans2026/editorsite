@@ -409,28 +409,22 @@ function renderPage(name){
   const frame = document.getElementById('preview-frame');
   const lo    = document.getElementById('loading-overlay');
   lo.style.display = 'flex';
-  const html = PAGES[name].html;
+  let html = PAGES[name].html;
   if(!html){ lo.style.display='none'; return; }
+  // Inject base tag BEFORE srcdoc is set so images resolve on first load
+  if(html.indexOf('id="_ed_base"') === -1){
+    html = html.replace(/(<head[^>]*>)/i, '$1<base id="_ed_base" href="https://evanshomeandlandscapes.co.uk/">');
+  }
   frame.srcdoc = html;
   frame.onload = () => {
     lo.style.display = 'none';
     try {
       const d = frame.contentDocument;
-      if(d){
-        // Inject base tag so relative image paths (images/...) resolve against the live site
-        if(!d.getElementById('_ed_base')){
-          const base = d.createElement('base');
-          base.id = '_ed_base';
-          base.href = 'https://evanshomeandlandscapes.co.uk/';
-          (d.head || d.documentElement).insertBefore(base, (d.head||d.documentElement).firstChild);
-        }
-        // Inject scroll receiver
-        if(!d.getElementById('_ed_scr')){
-          const s = d.createElement('script');
-          s.id = '_ed_scr';
-          s.textContent = 'window.addEventListener("message",function(e){if(e.data&&e.data._edScroll){window.scrollBy(e.data.x,e.data.y);}});';
-          (d.head || d.documentElement).appendChild(s);
-        }
+      if(d && !d.getElementById('_ed_scr')){
+        const s = d.createElement('script');
+        s.id = '_ed_scr';
+        s.textContent = 'window.addEventListener("message",function(e){if(e.data&&e.data._edScroll){window.scrollBy(e.data.x,e.data.y);}});';
+        (d.head || d.documentElement).appendChild(s);
       }
     } catch(ex){}
     if(editMode){ injectEditCSS(); injectGalleryEditUI(); }
@@ -658,7 +652,11 @@ function onClick(e){
     openLink(_hovEl);
   } else if(_hovEl && _hovType === 'img'){
     const src = _hovEl.src || '';
-    openImg(_hovEl, src, src.split('/').pop(), imgType(_hovEl), false);
+    // Use getAttribute to get the raw attribute value (not the resolved absolute URL)
+    // so the filename is always a clean basename like "evans-logo.jpeg"
+    const rawSrc = _hovEl.getAttribute('src') || src;
+    const filename = rawSrc.startsWith('data:') ? ('img-'+Date.now()+'.jpg') : rawSrc.split('/').pop().split('?')[0];
+    openImg(_hovEl, src, filename, imgType(_hovEl), false);
   } else {
     if(rawRes) checkBg(rawRes.el);
   }
@@ -980,14 +978,27 @@ async function getEditorSource(){
 // uploads each as a real file to GitHub, replaces src with the path.
 async function extractInlineImages(pageHtml){
   const results = [];
-  const re = /src="(data:image\/(jpeg|png|gif|webp);base64,([A-Za-z0-9+\/=]+))"/g;
+
+  // Match data URLs in src="..." attributes (img tags)
+  const reSrc = /src="(data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,([A-Za-z0-9+\/=]+))"/g;
   let m;
-  while((m = re.exec(pageHtml)) !== null){
-    const ext  = m[2]==='jpeg'?'jpg':m[2];
+  while((m = reSrc.exec(pageHtml)) !== null){
+    const ext  = (m[2]==='jpeg'||m[2]==='jpg')?'jpg': m[2]==='svg+xml'?'svg': m[2];
     const b64  = m[3];
     const hash = b64.replace(/[^A-Za-z0-9]/g,'').substring(0,14);
-    results.push({full:m[0], b64, ext, path:'images/ed-'+hash+'.'+ext});
+    results.push({full:m[0], b64, ext, path:'images/ed-'+hash+'.'+ext, replaceWith:'src="images/ed-'+hash+'.'+ext+'"'});
   }
+
+  // Match data URLs in CSS url(...) — covers inline style background-image
+  const reBg = /url\(["']?(data:image\/(jpeg|jpg|png|gif|webp|svg\+xml);base64,([A-Za-z0-9+\/=]+))["']?\)/g;
+  while((m = reBg.exec(pageHtml)) !== null){
+    const ext  = (m[2]==='jpeg'||m[2]==='jpg')?'jpg': m[2]==='svg+xml'?'svg': m[2];
+    const b64  = m[3];
+    const hash = b64.replace(/[^A-Za-z0-9]/g,'').substring(0,14);
+    const path = 'images/ed-'+hash+'.'+ext;
+    results.push({full:m[0], b64, ext, path, replaceWith:'url("'+path+'")'});
+  }
+
   for(const img of results){
     try {
       let sha=null;
@@ -998,7 +1009,7 @@ async function extractInlineImages(pageHtml){
       const r=await fetch(GH_API+img.path,{method:'PUT',
         headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'},
         body:JSON.stringify(body)});
-      if(r.ok) pageHtml=pageHtml.split(img.full).join('src="'+img.path+'"');
+      if(r.ok) pageHtml=pageHtml.split(img.full).join(img.replaceWith);
     } catch(e){}
   }
   return pageHtml;
