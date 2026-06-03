@@ -506,7 +506,24 @@ function elAtPoint(cx, cy){
   const r = f.getBoundingClientRect();
   try {
     const doc = getFrameDoc();
-    return { doc, el: doc.elementFromPoint(cx - r.left, cy - r.top) };
+    let el = doc.elementFromPoint(cx - r.left, cy - r.top);
+    // Some spans use -webkit-text-fill-color:transparent (gradient text) which makes
+    // them invisible to hit-testing — elementFromPoint returns the parent instead.
+    // Fix: after finding the parent, check if the cursor is inside any inline child.
+    if(el && el.children.length){
+      const ix = cx - r.left, iy = cy - r.top;
+      for(const child of el.children){
+        if(INLINE_TAGS.has(child.tagName.toUpperCase())){
+          try {
+            const br = child.getBoundingClientRect();
+            if(ix >= br.left && ix <= br.right && iy >= br.top && iy <= br.bottom){
+              el = child; break;
+            }
+          } catch(e){}
+        }
+      }
+    }
+    return { doc, el };
   } catch(e){ return null; }
 }
 
