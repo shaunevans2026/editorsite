@@ -739,8 +739,7 @@ function closeText(){
 }
 function applyText(){
   if(!_txtEl) return;
-  const newTxt = document.getElementById('text-ta').value.trim();
-  if(!newTxt) return;
+  const newTxt = document.getElementById('text-ta').value;
   pushUndo();
 
   // 1. Try direct text nodes first (safest — leaves child elements untouched)
