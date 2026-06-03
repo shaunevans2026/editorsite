@@ -514,6 +514,8 @@ const SKIP_TAGS  = new Set(['INPUT','SELECT','TEXTAREA','SCRIPT','STYLE','CANVAS
 const SKIP_CLS   = new Set(['nav-hamburger','slider-word','hero-word-slider','word-slider','rotating-word','hero-slider-word','filter-btn','tcard-stars','rating-stars-big','review-stars','theme-toggle-btn','_gal-del','_gal-add-card','_gal-add-btn','gallery-item-overlay','gallery-badge']);
 const TEXT_TAGS  = new Set(['H1','H2','H3','H4','H5','H6','P','A','LI','SPAN','LABEL','BUTTON','B','STRONG','EM','I','TD','TH']);
 const BLOCK_TAGS = new Set(['DIV','P','H1','H2','H3','H4','H5','H6','SECTION','ARTICLE','UL','OL','HEADER','FOOTER']);
+// Inline elements — if the first match is one of these, keep bubbling up to find the real block parent
+const INLINE_TAGS = new Set(['SPAN','B','STRONG','EM','I','LABEL','SMALL','MARK','SUB','SUP']);
 
 function editType(el){
   if(!el || !el.tagName) return null;
@@ -542,12 +544,24 @@ function editType(el){
 
 function findEditable(el){
   let depth = 0;
-  while(el && depth < 3){
+  let inlineFallback = null; // hold an inline match in case no block parent is found
+  while(el && depth < 8){
     const t = editType(el);
-    if(t) return { el, type: t };
+    if(t){
+      const tag = el.tagName.toUpperCase();
+      if(t === 'img') return { el, type: t }; // always take img immediately
+      // If it's an inline element (span/b/em etc.), save as fallback and keep bubbling
+      // up to find the proper block parent (h1-h6, p, li, button)
+      if(INLINE_TAGS.has(tag)){
+        if(!inlineFallback) inlineFallback = { el, type: t };
+        el = el.parentElement; depth++;
+        continue;
+      }
+      return { el, type: t };
+    }
     el = el.parentElement; depth++;
   }
-  return null;
+  return inlineFallback; // use the inline element if no block parent was found
 }
 
 function clearHov(){
