@@ -414,17 +414,26 @@ function renderPage(name){
   frame.srcdoc = html;
   frame.onload = () => {
     lo.style.display = 'none';
-    if(editMode){ injectEditCSS(); injectGalleryEditUI(); }
-    // Inject scroll receiver — runs inside iframe's own context so scrollBy works unconditionally
     try {
       const d = frame.contentDocument;
-      if(d && !d.getElementById('_ed_scr')){
-        const s = d.createElement('script');
-        s.id = '_ed_scr';
-        s.textContent = 'window.addEventListener("message",function(e){if(e.data&&e.data._edScroll){window.scrollBy(e.data.x,e.data.y);}});';
-        (d.head || d.documentElement).appendChild(s);
+      if(d){
+        // Inject base tag so relative image paths (images/...) resolve against the live site
+        if(!d.getElementById('_ed_base')){
+          const base = d.createElement('base');
+          base.id = '_ed_base';
+          base.href = 'https://evanshomeandlandscapes.co.uk/';
+          (d.head || d.documentElement).insertBefore(base, (d.head||d.documentElement).firstChild);
+        }
+        // Inject scroll receiver
+        if(!d.getElementById('_ed_scr')){
+          const s = d.createElement('script');
+          s.id = '_ed_scr';
+          s.textContent = 'window.addEventListener("message",function(e){if(e.data&&e.data._edScroll){window.scrollBy(e.data.x,e.data.y);}});';
+          (d.head || d.documentElement).appendChild(s);
+        }
       }
     } catch(ex){}
+    if(editMode){ injectEditCSS(); injectGalleryEditUI(); }
   };
 }
 
@@ -853,7 +862,7 @@ function snapshotPage(){
     const doc = getFrameDoc();
     if(!doc || !doc.documentElement) return;
     // Strip all editor-injected elements before capturing clean HTML
-    ['_ecss','_galcss','_ed_scr'].forEach(id => { const el = doc.getElementById(id); if(el) el.remove(); });
+    ['_ed_base','_ecss','_galcss','_ed_scr'].forEach(id => { const el = doc.getElementById(id); if(el) el.remove(); });
     doc.querySelectorAll('._gal-del,._gal-add-card,._gal-add-btn').forEach(el => el.remove());
     doc.querySelectorAll('[data-gal-ed]').forEach(el => el.removeAttribute('data-gal-ed'));
     doc.querySelectorAll('._eh,._ehi,._ehl').forEach(el => el.classList.remove('_eh','_ehi','_ehl'));
