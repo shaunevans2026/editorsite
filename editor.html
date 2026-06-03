@@ -375,8 +375,6 @@ function login(){
 // ─── INIT ───────────────────────────────────────────────────────
 async function init(){
   setStatus('Loading pages from GitHub…','orange');
-  // For each page: keep local saved content if it exists, fetch from GitHub if missing
-  const hasAnyLocal = Object.keys(PAGES).some(k => PAGES[k].html);
   try {
     await Promise.all(Object.keys(PAGES).map(async k => {
       const p = PAGES[k];
@@ -384,16 +382,13 @@ async function init(){
       if(!r.ok) throw new Error(p.file);
       const d = await r.json();
       ghSHAs[p.file] = d.sha;
-      if(!p.html){
-        // Only overwrite if we have no local version
-        p.html = decodeURIComponent(escape(atob(d.content.replace(/\n/g,''))));
-      }
+      // Always load latest from GitHub so edits made last session are reflected
+      p.html = decodeURIComponent(escape(atob(d.content.replace(/\n/g,''))));
     }));
     setStatus('All pages loaded — ready to edit','green');
   } catch(e){
     setStatus('Could not reach GitHub. Using cached content.','orange');
   }
-  if(hasAnyLocal) changed = true; // local edits exist, mark for publish
   renderPage(curPage);
 }
 
