@@ -976,6 +976,17 @@ async function getEditorSource(){
 // ─── PUBLISH TO GITHUB ───────────────────────────────────────────
 // Extracts inline base64 data-URL images from page HTML,
 // uploads each as a real file to GitHub, replaces src with the path.
+// Hash that samples the ENTIRE base64 string so every image gets a unique name
+// (sampling just the start fails for JPEGs — they all share the same /9j/4AAQ prefix)
+function b64Hash(b64){
+  let h = 5381;
+  const step = Math.max(1, Math.floor(b64.length / 64));
+  for(let i = 0; i < b64.length; i += step){
+    h = (((h << 5) + h) ^ b64.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(36).padStart(8,'0');
+}
+
 async function extractInlineImages(pageHtml){
   const results = [];
 
@@ -985,7 +996,7 @@ async function extractInlineImages(pageHtml){
   while((m = reSrc.exec(pageHtml)) !== null){
     const ext  = (m[2]==='jpeg'||m[2]==='jpg')?'jpg': m[2]==='svg+xml'?'svg': m[2];
     const b64  = m[3];
-    const hash = b64.replace(/[^A-Za-z0-9]/g,'').substring(0,14);
+    const hash = b64Hash(b64);
     results.push({full:m[0], b64, ext, path:'images/ed-'+hash+'.'+ext, replaceWith:'src="images/ed-'+hash+'.'+ext+'"'});
   }
 
@@ -994,7 +1005,7 @@ async function extractInlineImages(pageHtml){
   while((m = reBg.exec(pageHtml)) !== null){
     const ext  = (m[2]==='jpeg'||m[2]==='jpg')?'jpg': m[2]==='svg+xml'?'svg': m[2];
     const b64  = m[3];
-    const hash = b64.replace(/[^A-Za-z0-9]/g,'').substring(0,14);
+    const hash = b64Hash(b64);
     const path = 'images/ed-'+hash+'.'+ext;
     results.push({full:m[0], b64, ext, path, replaceWith:'url("'+path+'")'});
   }
