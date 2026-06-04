@@ -354,6 +354,7 @@ let ghSHAs     = {};
 let pendingImgs= {};
 let changed    = false;
 let changedPages = new Set(); // tracks which pages were actually edited this session
+let iframeLoadedPage = null;  // which page is ACTUALLY loaded in the iframe right now
 
 // Edit overlay state
 let _ovEl = null, _tipEl = null, _hovEl = null, _hovType = null;
@@ -410,6 +411,7 @@ function renderPage(name){
   const frame = document.getElementById('preview-frame');
   const lo    = document.getElementById('loading-overlay');
   lo.style.display = 'flex';
+  iframeLoadedPage = null; // clear — iframe is now transitioning, don't snapshot until loaded
   let html = PAGES[name].html;
   if(!html){ lo.style.display='none'; return; }
   // Inject base tag BEFORE srcdoc is set so images resolve on first load
@@ -418,6 +420,7 @@ function renderPage(name){
   }
   frame.srcdoc = html;
   frame.onload = () => {
+    iframeLoadedPage = name; // iframe has fully loaded — safe to snapshot now
     lo.style.display = 'none';
     try {
       const d = frame.contentDocument;
@@ -891,6 +894,10 @@ function pushUndo(){
 }
 
 function snapshotPage(){
+  // SAFETY: only snapshot if the iframe has fully loaded the correct page.
+  // If the iframe is still transitioning (iframeLoadedPage is null or wrong),
+  // capturing outerHTML would save the PREVIOUS page's content under the wrong key.
+  if(iframeLoadedPage !== curPage) return;
   try {
     const doc = getFrameDoc();
     if(!doc || !doc.documentElement) return;
