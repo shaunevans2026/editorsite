@@ -353,6 +353,7 @@ let undoStacks = {index:[],services:[],about:[],gallery:[],reviews:[],book:[]};
 let ghSHAs     = {};
 let pendingImgs= {};
 let changed    = false;
+let changedPages = new Set(); // tracks which pages were actually edited this session
 
 // Edit overlay state
 let _ovEl = null, _tipEl = null, _hovEl = null, _hovType = null;
@@ -902,7 +903,9 @@ function snapshotPage(){
     if(h !== PAGES[curPage].html){
       undoStacks[curPage].push(PAGES[curPage].html);
       PAGES[curPage].html = h;
-      changed = true; updateUndo();
+      changed = true;
+      changedPages.add(curPage); // mark only this page as modified
+      updateUndo();
     }
   } catch(ex){}
 }
@@ -1061,19 +1064,26 @@ async function extractInlineImages(pageHtml){
 }
 
 async function publishSite(){
-  snapshotPage();
-  // Always allow publish — changed flag may be false on reopen even with saved local edits
+  snapshotPage(); // captures current page — adds it to changedPages if modified
   const overlay = document.getElementById('pub-overlay');
   const msg  = document.getElementById('pub-msg');
   const fill = document.getElementById('pub-fill');
   overlay.classList.add('show');
-  const keys = Object.keys(PAGES), imgKeys = Object.keys(pendingImgs);
+  // Only publish pages that were actually edited this session
+  const allKeys = Object.keys(PAGES);
+  const keys = allKeys.filter(k => changedPages.has(k) && PAGES[k].html);
+  const imgKeys = Object.keys(pendingImgs);
+  if(keys.length === 0 && imgKeys.length === 0){
+    overlay.classList.remove('show');
+    toast('Nothing to publish — no changes made','info');
+    return;
+  }
   const total = keys.length + imgKeys.length;
   let done = 0;
   const prog = m => { done++; fill.style.width = Math.round(done/total*100)+'%'; msg.textContent = m; };
   try {
     for(const k of keys){
-      const p = PAGES[k]; if(!p.html){ prog('Skipped '+p.label); continue; }
+      const p = PAGES[k];
       msg.textContent = 'Uploading '+p.label+'…';
       // Extract any inline data-URL images, upload them, replace with paths
       p.html = await extractInlineImages(p.html);
@@ -1100,7 +1110,7 @@ async function publishSite(){
       await fetch(GH_API+ip, {method:'PUT', headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(ibody)});
       prog('Uploaded '+file.name);
     }
-    pendingImgs = {}; changed = false;
+    pendingImgs = {}; changed = false; changedPages.clear();
     overlay.classList.remove('show');
     toast('🚀 Published! Site updates in ~30 seconds','success');
   } catch(ex){
