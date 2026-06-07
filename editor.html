@@ -945,16 +945,19 @@ function pushUndo(){
   try {
     const doc = getFrameDoc();
     if(!doc) return;
-    // Remove editor-injected nodes BEFORE capturing so they never pollute PAGES[].html.
-    // Without this, _ed_base ends up in PAGES[].html; snapshotPage then removes it from
-    // the DOM, finds a mismatch, and marks the page dirty even when nothing was edited.
-    ['_ed_base','_ecss','_galcss','_ed_scr'].forEach(id => { const el = doc.getElementById(id); if(el) el.remove(); });
+    // Strip highlight classes from the live DOM (cosmetic only — safe to modify in place)
     doc.querySelectorAll('._eh,._ehi').forEach(el => el.classList.remove('_eh','_ehi'));
     doc.querySelectorAll('.slider-word').forEach(el => el.classList.remove('active','exit'));
     undoStacks[curPage].push(PAGES[curPage].html);
-    PAGES[curPage].html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
-    // Re-inject base tag so images continue to load after the undo snapshot
-    injectEditCSS();
+    // Capture HTML then strip editor-injected artifacts from the STRING, NOT the DOM.
+    // Removing _ed_base from the DOM kills the base URL that all images depend on,
+    // causing every image to go broken immediately after the undo snapshot.
+    let h = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    h = h.replace(/<base\b[^>]+id="_ed_base"[^>]*>\s*/gi, '');
+    h = h.replace(/<style\b[^>]+id="_ecss"[^>]*>[\s\S]*?<\/style>\s*/gi, '');
+    h = h.replace(/<style\b[^>]+id="_galcss"[^>]*>[\s\S]*?<\/style>\s*/gi, '');
+    h = h.replace(/<script\b[^>]+id="_ed_scr"[^>]*>[\s\S]*?<\/script>\s*/gi, '');
+    PAGES[curPage].html = h;
   } catch(ex){}
 }
 
