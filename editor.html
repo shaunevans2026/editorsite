@@ -1189,13 +1189,18 @@ async function publishSite(){
     for(const k of keys){
       const p = PAGES[k];
       msg.textContent = 'Uploading '+p.label+'…';
-      // Extract any inline data-URL images, upload them, replace with paths
-      p.html = await extractInlineImages(p.html);
+      // *** CRITICAL: extract data-URL images into a SEPARATE string for GitHub upload ***
+      // Do NOT overwrite p.html (PAGES[k].html) with the relative-URL version.
+      // If we did, the editor would immediately start loading images via the live site URL,
+      // which may not be deployed yet (GitHub Pages takes ~30s). This causes broken images
+      // in the editor after publish. The editor keeps data URLs in PAGES so images always
+      // display correctly. Only GitHub gets the clean relative-URL HTML.
+      const htmlForGithub = await extractInlineImages(p.html);
       if(!ghSHAs[p.file]){
         const r2 = await fetch(GH_API+p.file, {headers:{Authorization:'token '+GH_TOKEN}});
         if(r2.ok){ const d2 = await r2.json(); ghSHAs[p.file] = d2.sha; }
       }
-      const content = btoa(unescape(encodeURIComponent(p.html)));
+      const content = btoa(unescape(encodeURIComponent(htmlForGithub)));
       const body = {message:'Update '+p.file, content};
       if(ghSHAs[p.file]) body.sha = ghSHAs[p.file];
       const r = await fetch(GH_API+p.file, {method:'PUT', headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(body)});
