@@ -663,7 +663,7 @@ function onClick(e){
         if(chk.classList.contains('_gal-del')){
           // Delete this gallery item
           const item = chk.closest ? chk.closest('.gallery-item') : chk.parentElement;
-          if(item){ pushUndo(); item.remove(); changed = true; updateUndo(); toast('Image deleted from gallery','success'); }
+          if(item){ pushUndo(); item.remove(); changed = true; changedPages.add(curPage); updateUndo(); toast('Image deleted from gallery','success'); }
           return;
         }
         if(chk.classList.contains('_gal-add-card') || chk.classList.contains('_gal-add-btn')){
@@ -897,9 +897,16 @@ function pushUndo(){
   try {
     const doc = getFrameDoc();
     if(!doc) return;
+    // Remove editor-injected nodes BEFORE capturing so they never pollute PAGES[].html.
+    // Without this, _ed_base ends up in PAGES[].html; snapshotPage then removes it from
+    // the DOM, finds a mismatch, and marks the page dirty even when nothing was edited.
+    ['_ed_base','_ecss','_galcss','_ed_scr'].forEach(id => { const el = doc.getElementById(id); if(el) el.remove(); });
     doc.querySelectorAll('._eh,._ehi').forEach(el => el.classList.remove('_eh','_ehi'));
+    doc.querySelectorAll('.slider-word').forEach(el => el.classList.remove('active','exit'));
     undoStacks[curPage].push(PAGES[curPage].html);
     PAGES[curPage].html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    // Re-inject base tag so images continue to load after the undo snapshot
+    injectEditCSS();
   } catch(ex){}
 }
 
@@ -1304,7 +1311,7 @@ function applyGalAdd(){
   const addCard = grid.querySelector(`._gal-add-card[data-cat="${cat}"]`);
   addCard ? grid.insertBefore(item, addCard) : grid.appendChild(item);
 
-  changed = true; updateUndo();
+  changed = true; changedPages.add(curPage); updateUndo();
   closeGalAdd();
   toast(`${badge} image added — click Publish to go live.`,'success');
 }
@@ -1422,7 +1429,7 @@ function applyRWE(){
     PAGES[curPage].html = '<!DOCTYPE html>\n' + d.documentElement.outerHTML;
   } catch(ex){}
 
-  changed = true;
+  changed = true; changedPages.add(curPage);
   closeRWE();
   renderPage(curPage);
   toast('Rotating words updated! Click Publish to go live.','success');
