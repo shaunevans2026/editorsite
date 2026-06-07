@@ -911,7 +911,8 @@ function applyImg(){
   const r = new FileReader();
   r.onload = ev => {
     const dataUrl = ev.target.result;
-    pushUndo();
+    // Save old state to undo stack first
+    if(iframeLoadedPage === curPage){ undoStacks[curPage].push(PAGES[curPage].html); }
     if(_imgRef.isBg && _imgRef.el){
       _imgRef.el.style.backgroundImage = 'url("' + dataUrl + '")';
       try {
@@ -926,9 +927,28 @@ function applyImg(){
         });
       } catch(ex){}
     } else if(_imgRef.el && _imgRef.el.nodeType === 1){
-      _imgRef.el.src = dataUrl;
+      // Use setAttribute so the HTML attribute is set directly — .src can behave
+      // differently when a <base> tag is present, which breaks outerHTML capture.
+      _imgRef.el.setAttribute('src', dataUrl);
     }
     if(_imgRef.filename) pendingImgs['images/'+_imgRef.filename] = _newImg;
+    // *** Immediately capture the new state into PAGES right after setting the image ***
+    // This means PAGES always reflects the current image even before snapshotPage runs.
+    // Without this, PAGES has the OLD image until the user switches tabs, and a fast
+    // navigation could cause the old/wrong image to reappear.
+    try {
+      if(iframeLoadedPage === curPage){
+        const d2 = getFrameDoc();
+        if(d2 && d2.documentElement){
+          let h2 = '<!DOCTYPE html>\n' + d2.documentElement.outerHTML;
+          h2 = h2.replace(/<base\b[^>]+id="_ed_base"[^>]*>\s*/gi, '');
+          h2 = h2.replace(/<style\b[^>]+id="_ecss"[^>]*>[\s\S]*?<\/style>\s*/gi, '');
+          h2 = h2.replace(/<style\b[^>]+id="_galcss"[^>]*>[\s\S]*?<\/style>\s*/gi, '');
+          h2 = h2.replace(/<script\b[^>]+id="_ed_scr"[^>]*>[\s\S]*?<\/script>\s*/gi, '');
+          PAGES[curPage].html = h2;
+        }
+      }
+    } catch(ex){}
     changed = true; changedPages.add(curPage); updateUndo();
     closeImg();
     toast('Image replaced! Click Publish to go live.','success');
@@ -969,17 +989,20 @@ function snapshotPage(){
   try {
     const doc = getFrameDoc();
     if(!doc || !doc.documentElement) return;
-    // Strip all editor-injected elements before capturing clean HTML
-    ['_ed_base','_ecss','_galcss','_ed_scr'].forEach(id => { const el = doc.getElementById(id); if(el) el.remove(); });
+    // Strip gallery UI and highlight classes from the live DOM (safe cosmetic changes)
     doc.querySelectorAll('._gal-del,._gal-add-card,._gal-add-btn').forEach(el => el.remove());
     doc.querySelectorAll('[data-gal-ed]').forEach(el => el.removeAttribute('data-gal-ed'));
     doc.querySelectorAll('._eh,._ehi,._ehl').forEach(el => el.classList.remove('_eh','_ehi','_ehl'));
-    // Strip live animation state from word sliders so the saved HTML is always clean.
-    // Without this, slider words get snapshotted with 'active'/'exit' classes frozen in place.
-    // On the next page load the JS starts at index 0 but finds a different word already 'active',
-    // causing multiple words to be visible at once and stack on top of each other.
     doc.querySelectorAll('.slider-word').forEach(el => el.classList.remove('active','exit'));
-    const h = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    // *** CRITICAL: capture outerHTML FIRST, then strip editor artifacts from the STRING ***
+    // Never remove _ed_base/_ecss/_ed_scr from the live DOM before capturing —
+    // removing _ed_base causes Chrome to re-evaluate relative img URLs, which can corrupt
+    // data-URL image src attributes in outerHTML. Always use regex on the string instead.
+    let h = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+    h = h.replace(/<base\b[^>]+id="_ed_base"[^>]*>\s*/gi, '');
+    h = h.replace(/<style\b[^>]+id="_ecss"[^>]*>[\s\S]*?<\/style>\s*/gi, '');
+    h = h.replace(/<style\b[^>]+id="_galcss"[^>]*>[\s\S]*?<\/style>\s*/gi, '');
+    h = h.replace(/<script\b[^>]+id="_ed_scr"[^>]*>[\s\S]*?<\/script>\s*/gi, '');
     if(h !== PAGES[curPage].html){
       undoStacks[curPage].push(PAGES[curPage].html);
       PAGES[curPage].html = h;
