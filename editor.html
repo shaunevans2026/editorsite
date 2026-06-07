@@ -433,7 +433,55 @@ function renderPage(name){
       if(d && !d.getElementById('_ed_scr')){
         const s = d.createElement('script');
         s.id = '_ed_scr';
-        s.textContent = 'window.addEventListener("message",function(e){if(e.data&&e.data._edScroll){window.scrollBy(e.data.x,e.data.y);}});';
+        // This script runs INSIDE the iframe.
+        // 1. Forwards scroll events so the page scrolls when edit mode is off.
+        // 2. Intercepts ALL internal <a> clicks (nav bar, buttons, etc.) so they
+        //    switch the editor tab instead of navigating the iframe to the live URL.
+        //    Without this, clicking "SERVICES" in the site nav loads the real website
+        //    inside the iframe and shows completely different (live) content.
+        s.textContent = `
+(function(){
+  // Scroll forwarding
+  window.addEventListener('message', function(e){
+    if(e.data && e.data._edScroll){ window.scrollBy(e.data.x, e.data.y); }
+  });
+
+  // Internal link interception — map filenames → editor page keys
+  var PAGE_MAP = {
+    'index.html':'index', '':'index', '/':'index',
+    'services.html':'services',
+    'about.html':'about',
+    'gallery.html':'gallery',
+    'reviews.html':'reviews',
+    'book.html':'book'
+  };
+
+  document.addEventListener('click', function(e){
+    // Walk up to find the <a> tag that was clicked
+    var el = e.target;
+    while(el && el.tagName !== 'A') el = el.parentElement;
+    if(!el) return;
+    var href = el.getAttribute('href') || '';
+    // Ignore anchors (same-page jumps), mailto, tel, javascript:
+    if(!href || href.charAt(0) === '#' || href.indexOf('mailto:') === 0 || href.indexOf('tel:') === 0 || href.indexOf('javascript:') === 0) return;
+    // Extract just the filename from any URL
+    var filename = href.split('?')[0].split('#')[0];  // strip query/hash
+    filename = filename.split('/').pop();               // last segment
+    if(filename === '') filename = 'index.html';
+    var key = PAGE_MAP[filename];
+    if(key){
+      e.preventDefault();
+      e.stopPropagation();
+      // Tell the parent editor to switch to this page tab
+      window.parent.postMessage({ _edNav: key }, '*');
+    } else {
+      // External link — open in new tab so the editor isn't affected
+      e.preventDefault();
+      if(href && href.indexOf('http') === 0) window.open(href, '_blank');
+    }
+  }, true); // capture phase so it fires before any onclick handlers
+})();
+        `.trim();
         (d.head || d.documentElement).appendChild(s);
       }
     } catch(ex){}
@@ -1450,6 +1498,16 @@ document.getElementById('preview-wrap').addEventListener('wheel', function(e){
 },{passive:true});
 
 window.addEventListener('resize', () => { _frRect = null; });
+
+// ─── IFRAME NAV INTERCEPTION ─────────────────────────────────────
+// When the injected _ed_scr script inside the iframe catches an internal
+// link click, it sends _edNav here so we switch the editor tab instead of
+// letting the iframe navigate to the live website URL.
+window.addEventListener('message', function(e){
+  if(e.data && e.data._edNav){
+    switchPage(e.data._edNav);
+  }
+});
 
 // ─── KEYBOARD SHORTCUTS ──────────────────────────────────────────
 document.addEventListener('keydown', e => {
