@@ -916,6 +916,11 @@ function snapshotPage(){
     doc.querySelectorAll('._gal-del,._gal-add-card,._gal-add-btn').forEach(el => el.remove());
     doc.querySelectorAll('[data-gal-ed]').forEach(el => el.removeAttribute('data-gal-ed'));
     doc.querySelectorAll('._eh,._ehi,._ehl').forEach(el => el.classList.remove('_eh','_ehi','_ehl'));
+    // Strip live animation state from word sliders so the saved HTML is always clean.
+    // Without this, slider words get snapshotted with 'active'/'exit' classes frozen in place.
+    // On the next page load the JS starts at index 0 but finds a different word already 'active',
+    // causing multiple words to be visible at once and stack on top of each other.
+    doc.querySelectorAll('.slider-word').forEach(el => el.classList.remove('active','exit'));
     const h = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
     if(h !== PAGES[curPage].html){
       undoStacks[curPage].push(PAGES[curPage].html);
