@@ -397,6 +397,12 @@ async function init(){
 // ─── PAGE SWITCHING ─────────────────────────────────────────────
 function switchPage(name){
   if(name === curPage) return;
+  // Close ANY open edit popups before leaving the current page.
+  // Without this, a user could apply a text/image change AFTER switching pages,
+  // corrupting PAGES[newPage] with old-page DOM content via pushUndo.
+  closeText();
+  closeImg();
+  closeLink();
   snapshotPage();
   clearHov();
   curPage = name;
@@ -790,7 +796,7 @@ function applyText(){
     }
   }
 
-  changed = true; updateUndo();
+  changed = true; changedPages.add(curPage); updateUndo();
   closeText();
   toast('Text updated!','success');
 }
@@ -818,7 +824,7 @@ function applyLink(){
   // Remove any onclick that overrides the href
   if((_linkEl.getAttribute('onclick')||'').includes('window.location'))
     _linkEl.setAttribute('onclick', `window.location='${url}'`);
-  changed = true; updateUndo();
+  changed = true; changedPages.add(curPage); updateUndo();
   closeLink();
   toast('Link updated! Click Publish to go live.','success');
 }
@@ -875,7 +881,7 @@ function applyImg(){
       _imgRef.el.src = dataUrl;
     }
     if(_imgRef.filename) pendingImgs['images/'+_imgRef.filename] = _newImg;
-    changed = true; updateUndo();
+    changed = true; changedPages.add(curPage); updateUndo();
     closeImg();
     toast('Image replaced! Click Publish to go live.','success');
   };
@@ -884,6 +890,10 @@ function applyImg(){
 
 // ─── SNAPSHOT / UNDO ─────────────────────────────────────────────
 function pushUndo(){
+  // SAFETY GUARD: never capture iframe content when the iframe isn't showing curPage.
+  // Without this guard, applying a text/image edit after a page switch would save the
+  // wrong page's DOM into PAGES[curPage], causing cross-page content corruption.
+  if(iframeLoadedPage !== curPage) return;
   try {
     const doc = getFrameDoc();
     if(!doc) return;
@@ -1003,6 +1013,7 @@ async function getEditorSource(){
   stextEl.textContent = savedStext;
   toastEl.className   = savedToastClass;
   if(savedLErrStyle) lErrEl.setAttribute('style', savedLErrStyle);
+  iframeLoadedPage = null; // iframe is about to reload — block snapshots until it finishes
   frameEl.srcdoc      = PAGES[curPage].html || '';
   undoBtn.disabled    = savedUndoDisabled;
   document.querySelectorAll('.ptab').forEach(function(t){ t.classList.remove('active'); });
