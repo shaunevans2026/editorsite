@@ -375,36 +375,64 @@ function login(){
 }
 
 // ─── INIT ───────────────────────────────────────────────────────
+// Load ONE page's HTML from GitHub. Handles files of any size and never returns
+// empty. cache:'no-store' forces a real network request so we can't be handed a
+// stale cached response (which would also give a stale sha → Publish 409).
+async function loadPageHtml(p){
+  const r = await fetch(GH_API + p.file, {cache:'no-store', headers:{Authorization:'token '+GH_TOKEN}});
+  if(!r.ok) throw new Error(p.file + ' HTTP ' + r.status);
+  const d = await r.json();
+  ghSHAs[p.file] = d.sha;
+  let html;
+  // The Contents API only inlines base64 content for files < 1MB. Larger files
+  // (index.html / services.html carry inline base64 images) come back with
+  // encoding:"none" and EMPTY content — the original cause of the blank preview.
+  if(d.encoding === 'base64' && d.content){
+    html = decodeURIComponent(escape(atob(d.content.replace(/\n/g,''))));
+  } else {
+    // Fall back to the Blobs API (supports up to 100MB). Try the raw media type
+    // first; if that ever fails, fall back again to the base64-encoded blob so a
+    // single unsupported media type can't blank the page.
+    const rb = await fetch('https://api.github.com/repos/' + GH_REPO + '/git/blobs/' + d.sha,
+      {cache:'no-store', headers:{Authorization:'token '+GH_TOKEN, Accept:'application/vnd.github.raw'}});
+    if(rb.ok){
+      html = await rb.text();
+    } else {
+      const rb2 = await fetch('https://api.github.com/repos/' + GH_REPO + '/git/blobs/' + d.sha,
+        {cache:'no-store', headers:{Authorization:'token '+GH_TOKEN}});
+      if(!rb2.ok) throw new Error(p.file + ' (blob HTTP ' + rb2.status + ')');
+      const bd = await rb2.json();
+      html = decodeURIComponent(escape(atob((bd.content||'').replace(/\n/g,''))));
+    }
+  }
+  if(!html || !html.trim()) throw new Error(p.file + ' (empty response)');
+  return html;
+}
+
 async function init(){
   setStatus('Loading pages from GitHub…','orange');
-  try {
-    await Promise.all(Object.keys(PAGES).map(async k => {
-      const p = PAGES[k];
-      // cache:'no-store' forces a real network request. Without it the browser can
-      // serve a cached GitHub API response from a previous session — giving a STALE
-      // sha (which then makes Publish fail with a 409 "does not match") and stale
-      // page content (so you'd edit an old version of the page).
-      const r = await fetch(GH_API + p.file, {cache:'no-store', headers:{Authorization:'token '+GH_TOKEN}});
-      if(!r.ok) throw new Error(p.file);
-      const d = await r.json();
-      ghSHAs[p.file] = d.sha;
-      // Always load latest from GitHub so edits made last session are reflected.
-      // NOTE: the Contents API only inlines base64 content for files < 1MB. Larger
-      // files (index.html / services.html carry inline base64 images) come back with
-      // encoding:"none" and empty content — which used to render a blank preview.
-      // Fall back to the Blobs API (supports up to 100MB) using the raw media type.
-      if(d.encoding === 'base64' && d.content){
-        p.html = decodeURIComponent(escape(atob(d.content.replace(/\n/g,''))));
-      } else {
-        const rb = await fetch('https://api.github.com/repos/' + GH_REPO + '/git/blobs/' + d.sha,
-          {headers:{Authorization:'token '+GH_TOKEN, Accept:'application/vnd.github.raw'}});
-        if(!rb.ok) throw new Error(p.file + ' (blob)');
-        p.html = await rb.text();
-      }
-    }));
+  const keys = Object.keys(PAGES);
+  let pending = keys.slice();
+  // Try each page independently, with up to 3 rounds of retries for whatever
+  // failed. Promise.allSettled means one bad page can never blank the others.
+  for(let round=1; round<=3 && pending.length; round++){
+    if(round>1){ setStatus('Retrying '+pending.length+' page(s)…','orange'); await new Promise(r=>setTimeout(r, 700*round)); }
+    const res = await Promise.allSettled(pending.map(k => loadPageHtml(PAGES[k])));
+    const stillFailed = [];
+    pending.forEach((k,i) => { if(res[i].status==='fulfilled'){ PAGES[k].html = res[i].value; } else { stillFailed.push(k); } });
+    pending = stillFailed;
+  }
+  if(pending.length === 0){
     setStatus('All pages loaded — ready to edit','green');
-  } catch(e){
-    setStatus('Could not reach GitHub. Using cached content.','orange');
+  } else {
+    // Never fail silently. Tell the user exactly which pages didn't load and why.
+    setStatus('⚠ Could not load: '+pending.map(k=>PAGES[k].file).join(', ')+' — check your connection/token and reload the editor','red');
+  }
+  // If the page we're about to show failed to load, switch to one that succeeded
+  // so the user always sees content, never a blank screen.
+  if(!PAGES[curPage] || !PAGES[curPage].html){
+    const ok = keys.find(k => PAGES[k] && PAGES[k].html);
+    if(ok) curPage = ok;
   }
   renderPage(curPage);
 }
@@ -434,7 +462,13 @@ function renderPage(name){
   lo.style.display = 'flex';
   iframeLoadedPage = null; // clear — iframe is now transitioning, don't snapshot until loaded
   let html = PAGES[name].html;
-  if(!html){ lo.style.display='none'; return; }
+  if(!html){
+    // Never show a silent blank preview. If this page has no content (failed to
+    // load), say so clearly inside the frame instead of leaving it empty.
+    lo.style.display='none';
+    frame.srcdoc = '<body style="margin:0;font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;background:#fff;color:#b00020;text-align:center;padding:24px"><div><h2 style="margin:0 0 8px">This page didn’t load</h2><p style="margin:0;color:#555">'+name+'.html could not be fetched from GitHub. Check your connection and token, then reload the editor.</p></div></body>';
+    return;
+  }
   // Inject base tag BEFORE srcdoc is set so images resolve on first load
   if(html.indexOf('id="_ed_base"') === -1){
     html = html.replace(/(<head[^>]*>)/i, '$1<base id="_ed_base" href="https://evanshomeandlandscapes.co.uk/">');
