@@ -384,8 +384,19 @@ async function init(){
       if(!r.ok) throw new Error(p.file);
       const d = await r.json();
       ghSHAs[p.file] = d.sha;
-      // Always load latest from GitHub so edits made last session are reflected
-      p.html = decodeURIComponent(escape(atob(d.content.replace(/\n/g,''))));
+      // Always load latest from GitHub so edits made last session are reflected.
+      // NOTE: the Contents API only inlines base64 content for files < 1MB. Larger
+      // files (index.html / services.html carry inline base64 images) come back with
+      // encoding:"none" and empty content — which used to render a blank preview.
+      // Fall back to the Blobs API (supports up to 100MB) using the raw media type.
+      if(d.encoding === 'base64' && d.content){
+        p.html = decodeURIComponent(escape(atob(d.content.replace(/\n/g,''))));
+      } else {
+        const rb = await fetch('https://api.github.com/repos/' + GH_REPO + '/git/blobs/' + d.sha,
+          {headers:{Authorization:'token '+GH_TOKEN, Accept:'application/vnd.github.raw'}});
+        if(!rb.ok) throw new Error(p.file + ' (blob)');
+        p.html = await rb.text();
+      }
     }));
     setStatus('All pages loaded — ready to edit','green');
   } catch(e){
