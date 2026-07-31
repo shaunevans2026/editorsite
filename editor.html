@@ -1001,6 +1001,18 @@ function snapshotPage(){
   // If the iframe is still transitioning (iframeLoadedPage is null or wrong),
   // capturing outerHTML would save the PREVIOUS page's content under the wrong key.
   if(iframeLoadedPage !== curPage) return;
+  // Only capture pages the user has GENUINELY edited. Every real edit action
+  // (text / image / link / gallery / rotating-words) calls changedPages.add()
+  // before this runs, so an edited page is already flagged here.
+  // Without this guard, the site's OWN JavaScript — animated counters, the
+  // rotating hero word, the theme toggle — mutates the iframe DOM, so an
+  // UNEDITED page's serialized outerHTML no longer matches its stored HTML and
+  // would be marked "changed". Publish then re-pushes that page from THIS tab's
+  // in-memory copy, which may be older than what is currently live — silently
+  // reverting a previously published change minutes/hours/days later. Guarding
+  // here guarantees: once published, a page is never rewritten until it is
+  // actually edited again.
+  if(!changedPages.has(curPage)) return;
   try {
     const doc = getFrameDoc();
     if(!doc || !doc.documentElement) return;
