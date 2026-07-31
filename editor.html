@@ -380,7 +380,11 @@ async function init(){
   try {
     await Promise.all(Object.keys(PAGES).map(async k => {
       const p = PAGES[k];
-      const r = await fetch(GH_API + p.file, {headers:{Authorization:'token '+GH_TOKEN}});
+      // cache:'no-store' forces a real network request. Without it the browser can
+      // serve a cached GitHub API response from a previous session — giving a STALE
+      // sha (which then makes Publish fail with a 409 "does not match") and stale
+      // page content (so you'd edit an old version of the page).
+      const r = await fetch(GH_API + p.file, {cache:'no-store', headers:{Authorization:'token '+GH_TOKEN}});
       if(!r.ok) throw new Error(p.file);
       const d = await r.json();
       ghSHAs[p.file] = d.sha;
@@ -1164,14 +1168,21 @@ async function extractInlineImages(pageHtml){
 
   for(const img of results){
     try {
-      let sha=null;
-      const chk=await fetch(GH_API+img.path,{headers:{Authorization:'token '+GH_TOKEN}});
-      if(chk.ok){const cd=await chk.json();sha=cd.sha;}
-      const body={message:'Upload '+img.path,content:img.b64};
-      if(sha) body.sha=sha;
-      const r=await fetch(GH_API+img.path,{method:'PUT',
-        headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'},
-        body:JSON.stringify(body)});
+      const getSha = async () => {
+        const chk=await fetch(GH_API+img.path,{cache:'no-store',headers:{Authorization:'token '+GH_TOKEN}});
+        if(chk.ok){const cd=await chk.json();return cd.sha;}
+        return null;
+      };
+      let sha=await getSha();
+      const putImg=()=>{
+        const body={message:'Upload '+img.path,content:img.b64};
+        if(sha) body.sha=sha;
+        return fetch(GH_API+img.path,{method:'PUT',
+          headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'},
+          body:JSON.stringify(body)});
+      };
+      let r=await putImg();
+      if(r.status===409||r.status===422){ sha=await getSha(); r=await putImg(); }
       if(r.ok) pageHtml=pageHtml.split(img.full).join(img.replaceWith);
     } catch(e){}
   }
@@ -1207,14 +1218,25 @@ async function publishSite(){
       // in the editor after publish. The editor keeps data URLs in PAGES so images always
       // display correctly. Only GitHub gets the clean relative-URL HTML.
       const htmlForGithub = await extractInlineImages(p.html);
-      if(!ghSHAs[p.file]){
-        const r2 = await fetch(GH_API+p.file, {headers:{Authorization:'token '+GH_TOKEN}});
-        if(r2.ok){ const d2 = await r2.json(); ghSHAs[p.file] = d2.sha; }
-      }
       const content = btoa(unescape(encodeURIComponent(htmlForGithub)));
-      const body = {message:'Update '+p.file, content};
-      if(ghSHAs[p.file]) body.sha = ghSHAs[p.file];
-      const r = await fetch(GH_API+p.file, {method:'PUT', headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      // Always fetch the file's CURRENT sha from GitHub right before writing.
+      // A cached sha captured at load can go stale (previous publish, another
+      // session, or a stale browser cache), which made Publish fail with a 409
+      // "does not match". Re-reading immediately keeps the write in sync.
+      const freshSha = async () => {
+        const rm = await fetch(GH_API+p.file, {cache:'no-store', headers:{Authorization:'token '+GH_TOKEN}});
+        if(rm.ok){ const dm = await rm.json(); return dm.sha; }
+        return null;
+      };
+      let sha = await freshSha();
+      const put = () => {
+        const body = {message:'Update '+p.file, content};
+        if(sha) body.sha = sha;
+        return fetch(GH_API+p.file, {method:'PUT', headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      };
+      let r = await put();
+      // On a sha conflict, re-read the freshest sha and retry once.
+      if(r.status === 409 || r.status === 422){ sha = await freshSha(); r = await put(); }
       if(!r.ok){ const err=await r.json().catch(()=>({})); throw new Error(p.label+': '+(err.message||r.status)); }
       const rd = await r.json(); ghSHAs[p.file] = rd.content.sha;
       prog('Uploaded '+p.label);
@@ -1223,11 +1245,19 @@ async function publishSite(){
       const file = pendingImgs[ip];
       msg.textContent = 'Uploading '+file.name+'…';
       const b64 = await fileToB64(file);
-      let iSha = null;
-      try { const ri = await fetch(GH_API+ip, {headers:{Authorization:'token '+GH_TOKEN}}); if(ri.ok){ const di = await ri.json(); iSha = di.sha; } } catch(e){}
-      const ibody = {message:'Update image '+ip, content:b64};
-      if(iSha) ibody.sha = iSha;
-      await fetch(GH_API+ip, {method:'PUT', headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(ibody)});
+      const imgSha = async () => {
+        try { const ri = await fetch(GH_API+ip, {cache:'no-store', headers:{Authorization:'token '+GH_TOKEN}}); if(ri.ok){ const di = await ri.json(); return di.sha; } } catch(e){}
+        return null;
+      };
+      let iSha = await imgSha();
+      const putImg = () => {
+        const ibody = {message:'Update image '+ip, content:b64};
+        if(iSha) ibody.sha = iSha;
+        return fetch(GH_API+ip, {method:'PUT', headers:{Authorization:'token '+GH_TOKEN,'Content-Type':'application/json'}, body:JSON.stringify(ibody)});
+      };
+      let ri2 = await putImg();
+      if(ri2.status === 409 || ri2.status === 422){ iSha = await imgSha(); ri2 = await putImg(); }
+      if(!ri2.ok){ const ierr=await ri2.json().catch(()=>({})); throw new Error(file.name+': '+(ierr.message||ri2.status)); }
       prog('Uploaded '+file.name);
     }
     pendingImgs = {}; changed = false; changedPages.clear();
